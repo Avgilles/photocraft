@@ -19,6 +19,7 @@ use crate::{PhotocraftApp, menus, theme::Tokens, widgets};
 /// The bridge executable, resolved on PATH (`uv tool install` puts it there).
 const BRIDGE: &str = "xp-photocraft";
 const PROMPT_ID: &str = "selection-taskbar-prompt";
+const BAR_ID: &str = "selection-taskbar";
 /// The bridge's report, in the temp folder; named without that folder, which holds the user name.
 const LOG_NAME: &str = "xp-photocraft-bar.log";
 
@@ -48,11 +49,13 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
     // ponytail: anchored to the selection's bottom centre (unrotated view); follows pan and zoom.
     let below = xf.to_screen(bounds.x0 as f32 + bounds.width() as f32 / 2.0, bounds.y0 as f32 + bounds.height() as f32);
     let canvas = app.last_canvas_rect.shrink(8.0);
-    let at = egui::pos2((below.x - 260.0).clamp(canvas.left(), (canvas.right() - 520.0).max(canvas.left())), (below.y + 14.0).clamp(canvas.top(), (canvas.bottom() - 44.0).max(canvas.top())));
+    // Its size from the last frame (egui remembers areas); a guess before the first one.
+    let size = ctx.memory(|m| m.area_rect(Id::new(BAR_ID))).map_or(egui::vec2(520.0, 44.0), |r| r.size());
+    let at = bar_origin(below, size, canvas);
     let t = Tokens::get(ctx);
     let mut prompt: String = ctx.data(|d| d.get_temp(Id::new(PROMPT_ID))).unwrap_or_default();
     let mut clicked: Option<&'static str> = None;
-    Area::new(Id::new("selection-taskbar")).order(Order::Foreground).fixed_pos(at).constrain_to(canvas).show(ctx, |ui| {
+    Area::new(Id::new(BAR_ID)).order(Order::Foreground).fixed_pos(at).constrain_to(canvas).show(ctx, |ui| {
         egui::Frame::new().fill(t.card).stroke(Stroke::new(1.0, t.card_border)).corner_radius(t.radius).inner_margin(6).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.add(TextEdit::singleline(&mut prompt).hint_text("Describe what to generate…").desired_width(200.0));
@@ -82,6 +85,12 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
         Some("deselect") => run(app, ctx, "select.deselect", json!({})),
         _ => {}
     }
+}
+
+/// Where the bar goes for a selection whose bottom centre is `below` on screen: centred under it,
+/// kept inside the canvas.
+fn bar_origin(below: egui::Pos2, size: egui::Vec2, canvas: egui::Rect) -> egui::Pos2 {
+    egui::pos2((below.x - size.x / 2.0).clamp(canvas.left(), (canvas.right() - size.x).max(canvas.left())), (below.y + 14.0).clamp(canvas.top(), (canvas.bottom() - size.y).max(canvas.top())))
 }
 
 fn run(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, params: serde_json::Value) {
@@ -180,7 +189,7 @@ mod tests {
     use egui_kittest::kittest::Queryable;
     use serde_json::json;
 
-    use super::failed;
+    use super::{bar_origin, failed};
     use crate::PhotocraftApp;
 
     /// A dirty document with a rectangle selected: the bar shows under it.
@@ -218,5 +227,13 @@ mod tests {
         // The temp folder holds the user name on Windows: the status bar is filmed and shared.
         assert!(!shown.contains(&*std::env::temp_dir().to_string_lossy()), "{shown}");
         assert!(shown.contains("xp-photocraft-bar.log"), "{shown}");
+    }
+
+    #[test]
+    fn the_bar_is_centred_under_the_selection_inside_the_canvas() {
+        let canvas = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1400.0, 900.0));
+        let size = egui::vec2(790.0, 44.0);
+        assert_eq!(bar_origin(egui::pos2(600.0, 400.0), size, canvas), egui::pos2(205.0, 414.0));
+        assert_eq!(bar_origin(egui::pos2(1300.0, 880.0), size, canvas), egui::pos2(610.0, 856.0), "kept inside");
     }
 }
