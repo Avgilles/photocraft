@@ -5,7 +5,6 @@
 //! no address, no command and no key. The server field is the only place the address shows.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -30,6 +29,9 @@ struct Listing {
     workflows: Vec<Choice>,
     #[serde(default)]
     assign: BTreeMap<String, String>,
+    /// The saved ComfyUI server (the bridge owns where it is saved).
+    #[serde(default)]
+    server: String,
     #[serde(default)]
     error: String,
 }
@@ -77,7 +79,8 @@ fn body(ui: &mut egui::Ui) -> Option<String> {
     }
     ui.separator();
     widgets::section_label(ui, "ComfyUI server");
-    let mut url: String = ctx.data(|d| d.get_temp(Id::new(SERVER_ID))).unwrap_or_else(saved_server);
+    let saved = listing.as_ref().map(|l| l.server.clone()).unwrap_or_default();
+    let mut url: String = ctx.data(|d| d.get_temp(Id::new(SERVER_ID))).unwrap_or(saved);
     let mut connect = None;
     ui.horizontal(|ui| {
         ui.add(TextEdit::singleline(&mut url).hint_text("http://127.0.0.1:8188").desired_width(170.0));
@@ -86,7 +89,9 @@ fn body(ui: &mut egui::Ui) -> Option<String> {
             ui.close();
         }
     });
-    ctx.data_mut(|d| d.insert_temp(Id::new(SERVER_ID), url));
+    if listing.is_some() {
+        ctx.data_mut(|d| d.insert_temp(Id::new(SERVER_ID), url));
+    }
     connect
 }
 
@@ -98,12 +103,6 @@ fn workflow_menus(ui: &mut egui::Ui, ctx: &egui::Context, listing: &Listing) {
         ui.menu_button(format!("{label}: {shown}"), |ui| {
             for choice in &listing.workflows {
                 if ui.selectable_label(choice.id == current, &choice.label).clicked() {
-                    // Shown at once; the bridge's answer confirms it (or reports why not).
-                    if let Ok(mut slot) = LISTING.lock()
-                        && let Some(shown) = slot.as_mut()
-                    {
-                        shown.assign.insert(action.to_string(), choice.id.clone());
-                    }
                     query(ctx, &["assign", action, &choice.id]);
                     ui.close();
                 }
@@ -130,12 +129,4 @@ fn query(ctx: &egui::Context, args: &[&str]) {
         QUERYING.store(false, Ordering::SeqCst);
         ctx.request_repaint();
     });
-}
-
-/// The URL the bridge saved last (`connection.json`), or empty: the field then shows the default.
-fn saved_server() -> String {
-    let Some(base) = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("HOME")) else { return String::new() };
-    let path = PathBuf::from(base).join("xp-photocraft").join("connection.json");
-    let Ok(text) = std::fs::read_to_string(path) else { return String::new() };
-    serde_json::from_str::<serde_json::Value>(&text).ok().and_then(|v| v.get("comfy_url")?.as_str().map(str::to_string)).unwrap_or_default()
 }
