@@ -31,9 +31,8 @@ struct Running {
 }
 
 pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
-    if poll_running(app, ctx) {
-        return;
-    }
+    // A run leaves a placeholder layer and the app free: the bar stays, only the AI waits.
+    let running = poll_running(app, ctx);
     if app.ui.view.hides_chrome() || !app.ui.dialogs.is_empty() || app.jobs.focus.is_some() {
         return;
     }
@@ -54,12 +53,14 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
             ui.horizontal(|ui| {
                 ui.add(TextEdit::singleline(&mut prompt).hint_text("Describe what to generate…").desired_width(200.0));
                 let has_prompt = !prompt.trim().is_empty();
-                if ui.add_enabled_ui(has_prompt, |ui| widgets::primary_button(ui, "Generative fill", 0.0)).inner.clicked() {
+                let busy = "one generation at a time: wait for the current one";
+                if ui.add_enabled_ui(has_prompt && !running, |ui| widgets::primary_button(ui, "Generative fill", 0.0)).inner.on_disabled_hover_text(if running { busy } else { "describe what to generate first" }).clicked() {
                     clicked = Some("fill");
                 }
                 ui.separator();
                 for (label, id) in [("Remove", "remove"), ("Remove (AI)", "remove-ai"), ("Inverse", "inverse"), ("Mask", "mask"), ("Deselect", "deselect")] {
-                    if widgets::secondary_button(ui, label, 0.0).clicked() {
+                    let ai = id == "remove-ai";
+                    if ui.add_enabled_ui(!(ai && running), |ui| widgets::secondary_button(ui, label, 0.0)).inner.on_disabled_hover_text(busy).clicked() {
                         clicked = Some(id);
                     }
                 }
