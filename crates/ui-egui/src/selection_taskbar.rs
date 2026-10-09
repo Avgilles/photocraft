@@ -19,6 +19,8 @@ use crate::{PhotocraftApp, menus, theme::Tokens, widgets};
 /// The bridge executable, resolved on PATH (`uv tool install` puts it there).
 const BRIDGE: &str = "xp-photocraft";
 const PROMPT_ID: &str = "selection-taskbar-prompt";
+/// The bridge's report, in the temp folder; named without that folder, which holds the user name.
+const LOG_NAME: &str = "xp-photocraft-bar.log";
 
 /// One bridge run at a time; the bar shows it until the process exits.
 static RUNNING: Mutex<Option<Running>> = Mutex::new(None);
@@ -89,7 +91,7 @@ fn run(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, params: serde_jso
 /// The bridge's report goes to a file, not a pipe: a pipe nobody reads until the end blocks
 /// the bridge once its buffer fills, and the file survives for diagnosis.
 fn log_path() -> std::path::PathBuf {
-    std::env::temp_dir().join("xp-photocraft-bar.log")
+    std::env::temp_dir().join(LOG_NAME)
 }
 
 /// The bridge, with no stdin and no console window.
@@ -109,7 +111,7 @@ pub(crate) fn bridge_command() -> Command {
 pub(crate) fn spawn(app: &mut PhotocraftApp, label: &'static str, busy: &'static str, args: &[&str]) {
     let log = match std::fs::File::create(log_path()) {
         Ok(f) => f,
-        Err(e) => return report(app, format!("{label}: cannot write {} ({e})", log_path().display())),
+        Err(e) => return report(app, format!("{label}: cannot write {LOG_NAME} in the temp folder ({e})")),
     };
     let mut command = bridge_command();
     command.args(args).stdout(Stdio::null()).stderr(Stdio::from(log));
@@ -147,7 +149,7 @@ fn poll_running(app: &mut PhotocraftApp, ctx: &egui::Context) -> bool {
                 app.ui.status = last.map_or_else(|| format!("{label}: done"), str::to_string);
                 app.ui.status_error = false;
             } else {
-                report(app, format!("{label} failed: {} (full report: {})", last.unwrap_or("no report"), log_path().display()));
+                report(app, failed(label, last));
             }
             false
         }
@@ -160,7 +162,25 @@ fn poll_running(app: &mut PhotocraftApp, ctx: &egui::Context) -> bool {
     }
 }
 
+/// The status line of a failed run: the report's last line, and where the full report is.
+fn failed(label: &str, last: Option<&str>) -> String {
+    format!("{label} failed: {} (full report: {LOG_NAME} in the temp folder)", last.unwrap_or("no report"))
+}
+
 fn report(app: &mut PhotocraftApp, message: String) {
     app.ui.status = message;
     app.ui.status_error = true;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::failed;
+
+    #[test]
+    fn a_failure_names_the_report_without_its_folder() {
+        let shown = failed("Generative fill", Some("xp-photocraft fill: ComfyUI server unreachable"));
+        // The temp folder holds the user name on Windows: the status bar is filmed and shared.
+        assert!(!shown.contains(&*std::env::temp_dir().to_string_lossy()), "{shown}");
+        assert!(shown.contains("xp-photocraft-bar.log"), "{shown}");
+    }
 }
