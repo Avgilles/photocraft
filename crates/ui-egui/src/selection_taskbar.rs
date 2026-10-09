@@ -35,7 +35,9 @@ struct Running {
 pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
     // A run leaves a placeholder layer and the app free: the bar stays, only the AI waits.
     let running = poll_running(app, ctx);
-    if app.ui.view.hides_chrome() || !app.ui.dialogs.is_empty() || app.jobs.focus.is_some() {
+    // A modal (Unsaved changes, TIFF options, a job's progress…) is no app dialog: check egui's.
+    let modal = ctx.memory(|m| m.top_modal_layer()).is_some();
+    if app.ui.view.hides_chrome() || !app.ui.dialogs.is_empty() || app.jobs.focus.is_some() || modal {
         return;
     }
     let Some(bounds) = app.session.active().and_then(|st| st.doc.selection.as_ref()).map(|s| s.content_bounds()) else { return };
@@ -174,7 +176,41 @@ fn report(app: &mut PhotocraftApp, message: String) {
 
 #[cfg(test)]
 mod tests {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+    use serde_json::json;
+
     use super::failed;
+    use crate::PhotocraftApp;
+
+    /// A dirty document with a rectangle selected: the bar shows under it.
+    fn app_with_selection() -> Harness<'static, PhotocraftApp> {
+        let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_max_steps(64).build_eframe(|cc| {
+            PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
+            let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+            app.run("file.new", json!({"width": 400, "height": 300})).unwrap();
+            app.run("layer.new.layer", json!({})).unwrap();
+            app.run("select.rect", json!({"x": 100, "y": 100, "width": 120, "height": 60})).unwrap();
+            app
+        });
+        h.run_steps(6);
+        h
+    }
+
+    #[test]
+    fn the_bar_shows_under_a_selection() {
+        let h = app_with_selection();
+        assert!(h.query_by_label("Generative fill").is_some());
+    }
+
+    #[test]
+    fn a_modal_prompt_hides_the_bar() {
+        let mut h = app_with_selection();
+        // File › Close on a dirty document: "Unsaved changes", an egui modal (not an app dialog).
+        assert!(crate::discard_ui::intercept(h.state_mut(), "file.close", &json!({})));
+        h.run_steps(4);
+        assert!(h.query_by_label("Generative fill").is_none(), "nothing to click above a modal prompt");
+    }
 
     #[test]
     fn a_failure_names_the_report_without_its_folder() {
