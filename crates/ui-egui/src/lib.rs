@@ -119,6 +119,8 @@ pub mod notices;
 mod numeric_expression;
 #[cfg(not(target_arch = "wasm32"))]
 mod selection_taskbar;
+#[cfg(not(target_arch = "wasm32"))]
+mod xp_menu;
 mod opacity_keys;
 pub mod outline;
 pub mod paint_mouse;

@@ -1031,6 +1031,8 @@ pub fn menu_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) -> f32 {
     let mut right = ui.cursor().left();
     let lang = crate::i18n::current();
     let mut clicked: Option<String> = None;
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut xp_connect: Option<String> = None;
     let t = crate::theme::Tokens::get(ui.ctx());
     let mut nav = crate::menu_nav::Nav::load(ui.ctx());
     ui.scope(|ui| {
@@ -1100,8 +1102,19 @@ pub fn menu_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) -> f32 {
             switch_on_hover(ui.ctx(), &buttons);
             let tops: Vec<egui::Id> = buttons.iter().map(egui::Popup::default_response_id).collect();
             nav.keys(ui.ctx(), &tops, &mut clicked);
+            // Fork: the xp-photocraft menu (workflows, ComfyUI server), see `xp_menu`.
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let (title, connect) = crate::xp_menu::menu(ui, t.text_dim);
+                right = right.max(title.rect.right());
+                xp_connect = connect;
+            }
         });
     });
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(url) = xp_connect {
+        crate::selection_taskbar::spawn(app, "Connection", "testing the server…", &["connect", &url]);
+    }
     nav.store(ui.ctx());
     // No menu open this frame: nothing is kept.
     app.menu_cache = built.into_inner();
