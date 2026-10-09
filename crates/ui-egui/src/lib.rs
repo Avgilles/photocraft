@@ -117,6 +117,8 @@ pub mod native_menu;
 pub mod new_doc_ui;
 pub mod notices;
 mod numeric_expression;
+#[cfg(not(target_arch = "wasm32"))]
+mod selection_taskbar;
 mod opacity_keys;
 pub mod outline;
 pub mod paint_mouse;
@@ -1628,6 +1630,8 @@ impl eframe::App for PhotocraftApp {
         wide_angle_ui::show(self, &ctx);
         canvas::extra_windows(self, &ctx);
         notices::show(self, &ctx);
+        #[cfg(not(target_arch = "wasm32"))]
+        selection_taskbar::show(self, &ctx);
         gpu_status::show_fallback(self, &ctx);
         kys_import::show_offer(self, &ctx);
         if self.custom_titlebar {
