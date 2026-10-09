@@ -117,10 +117,6 @@ pub mod native_menu;
 pub mod new_doc_ui;
 pub mod notices;
 mod numeric_expression;
-#[cfg(not(target_arch = "wasm32"))]
-mod selection_taskbar;
-#[cfg(not(target_arch = "wasm32"))]
-mod xp_menu;
 mod opacity_keys;
 pub mod outline;
 pub mod paint_mouse;
@@ -152,6 +148,8 @@ pub mod rotate_view;
 pub mod rulers;
 pub mod screen_picker;
 pub mod scrollbars;
+#[cfg(not(target_arch = "wasm32"))]
+mod selection_taskbar;
 pub mod served_fonts;
 pub mod shape_dialog;
 pub(crate) mod shape_fill_ui;
@@ -198,6 +196,8 @@ pub mod wide_angle_ui;
 pub mod widgets;
 pub mod work_area;
 pub mod workspace_ui;
+#[cfg(not(target_arch = "wasm32"))]
+mod xp_menu;
 pub mod zoom_levels;
 pub mod zoom_tool;
 

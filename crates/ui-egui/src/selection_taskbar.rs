@@ -61,7 +61,12 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
                 ui.add(TextEdit::singleline(&mut prompt).hint_text("Describe what to generate…").desired_width(200.0));
                 let has_prompt = !prompt.trim().is_empty();
                 let busy = "one generation at a time: wait for the current one";
-                if ui.add_enabled_ui(has_prompt && !running, |ui| widgets::primary_button(ui, "Generative fill", 0.0)).inner.on_disabled_hover_text(if running { busy } else { "describe what to generate first" }).clicked() {
+                if ui
+                    .add_enabled_ui(has_prompt && !running, |ui| widgets::primary_button(ui, "Generative fill", 0.0))
+                    .inner
+                    .on_disabled_hover_text(if running { busy } else { "describe what to generate first" })
+                    .clicked()
+                {
                     clicked = Some("fill");
                 }
                 ui.separator();
@@ -90,7 +95,10 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
 /// Where the bar goes for a selection whose bottom centre is `below` on screen: centred under it,
 /// kept inside the canvas.
 fn bar_origin(below: egui::Pos2, size: egui::Vec2, canvas: egui::Rect) -> egui::Pos2 {
-    egui::pos2((below.x - size.x / 2.0).clamp(canvas.left(), (canvas.right() - size.x).max(canvas.left())), (below.y + 14.0).clamp(canvas.top(), (canvas.bottom() - size.y).max(canvas.top())))
+    egui::pos2(
+        (below.x - size.x / 2.0).clamp(canvas.left(), (canvas.right() - size.x).max(canvas.left())),
+        (below.y + 14.0).clamp(canvas.top(), (canvas.bottom() - size.y).max(canvas.top())),
+    )
 }
 
 fn run(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, params: serde_json::Value) {

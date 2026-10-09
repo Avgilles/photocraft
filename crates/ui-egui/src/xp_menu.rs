@@ -120,7 +120,8 @@ fn query(ctx: &egui::Context, args: &[&str]) {
     let (ctx, args): (egui::Context, Vec<String>) = (ctx.clone(), args.iter().map(|a| a.to_string()).collect());
     std::thread::spawn(move || {
         let listing = match selection_taskbar::bridge_command().args(&args).stderr(std::process::Stdio::null()).output() {
-            Ok(out) => serde_json::from_slice(out.stdout.trim_ascii()).unwrap_or_else(|_| Listing { error: "the bridge gave no workflow list (update xp-photocraft)".into(), ..Listing::default() }),
+            Ok(out) => serde_json::from_slice(out.stdout.trim_ascii())
+                .unwrap_or_else(|_| Listing { error: "the bridge gave no workflow list (update xp-photocraft)".into(), ..Listing::default() }),
             Err(e) => Listing { error: format!("could not start `xp-photocraft` ({e})"), ..Listing::default() },
         };
         if let Ok(mut slot) = LISTING.lock() {
