@@ -11,6 +11,7 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use egui::{Area, Id, Order, Stroke, TextEdit};
+use photocraft_doc::DocId;
 use serde_json::json;
 
 use crate::canvas::ViewXform;
@@ -25,6 +26,9 @@ const LOG_NAME: &str = "xp-photocraft-bar.log";
 
 /// One bridge run at a time; the bar shows it until the process exits.
 static RUNNING: Mutex<Option<Running>> = Mutex::new(None);
+/// An AI action asked on a document never saved: it waits for the "save first?" answer, then
+/// for the Save dialog (the bridge keeps each result in `xp-work` next to the document's file).
+static PENDING: Mutex<Option<Pending>> = Mutex::new(None);
 
 struct Running {
     child: Child,
@@ -33,7 +37,16 @@ struct Running {
     started: Instant,
 }
 
+struct Pending {
+    label: &'static str,
+    busy: &'static str,
+    args: Vec<String>,
+    /// The Save dialog was opened for this document: run once it has a path.
+    saving: Option<DocId>,
+}
+
 pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
+    poll_pending(app, ctx);
     // A run leaves a placeholder layer and the app free: the bar stays, only the AI waits.
     let running = poll_running(app, ctx);
     // A modal (Unsaved changes, TIFF options, a job's progress…) is no app dialog: check egui's.
@@ -81,13 +94,101 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
     });
     ctx.data_mut(|d| d.insert_temp(Id::new(PROMPT_ID), prompt.clone()));
     match clicked {
-        Some("fill") => spawn(app, "Generative fill", "generating…", &["fill", "--prompt", prompt.trim()]),
-        Some("remove-ai") => spawn(app, "Remove (AI)", "generating…", &["remove"]),
+        Some("fill") => generate(app, "Generative fill", "generating…", &["fill", "--prompt", prompt.trim()]),
+        Some("remove-ai") => generate(app, "Remove (AI)", "generating…", &["remove"]),
         // Empty params open Content-Aware Fill's dialog; its default sampling runs it at once.
         Some("remove") => run(app, ctx, "edit.contentAwareFill", json!({"sampling": "auto"})),
         Some("inverse") => run(app, ctx, "select.inverse", json!({})),
         Some("mask") => run(app, ctx, "layer.layerMask.revealSelection", json!({})),
         Some("deselect") => run(app, ctx, "select.deselect", json!({})),
+        _ => {}
+    }
+}
+
+/// An AI action: runs at once on a saved document; a document never saved is asked about first,
+/// since the bridge keeps each result in `xp-work` next to the document's file.
+fn generate(app: &mut PhotocraftApp, label: &'static str, busy: &'static str, args: &[&str]) {
+    let saved = app.session.active().is_some_and(|st| st.path.is_some());
+    if saved {
+        return spawn(app, label, busy, args);
+    }
+    if let Ok(mut slot) = PENDING.lock() {
+        *slot = Some(Pending { label, busy, args: args.iter().map(|a| a.to_string()).collect(), saving: None });
+    }
+}
+
+/// The "save first?" prompt, then the wait for the Save dialog's outcome.
+fn poll_pending(app: &mut PhotocraftApp, ctx: &egui::Context) {
+    let Ok(mut slot) = PENDING.lock() else { return };
+    let Some(pending) = slot.as_mut() else { return };
+    if let Some(doc) = pending.saving {
+        let path = app.session.active().filter(|st| st.doc.id == doc).and_then(|st| st.path.clone());
+        if path.is_some() {
+            if let Some(Pending { label, busy, args, .. }) = slot.take() {
+                drop(slot);
+                let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                spawn(app, label, busy, &args);
+            }
+        } else if app.file_dialog.is_none() {
+            // The Save dialog closed without a path: the user backed out.
+            let label = pending.label;
+            slot.take();
+            drop(slot);
+            app.ui.status = format!("{label}: not started (the document was not saved)");
+            app.ui.status_error = false;
+        }
+        return;
+    }
+    let name = app.session.active().map(|st| st.doc.name.clone()).unwrap_or_default();
+    let buttons = [
+        widgets::DialogButton::new(widgets::ButtonRole::Default, "Save…", 96.0),
+        widgets::DialogButton::new(widgets::ButtonRole::Alternate, "Continue", 96.0),
+        widgets::DialogButton::new(widgets::ButtonRole::Cancel, "Cancel", 84.0),
+    ];
+    let mut answer: Option<widgets::ButtonRole> = None;
+    let modal = egui::Modal::new(Id::new("xp-save-first")).show(ctx, |ui| {
+        ui.set_max_width(440.0);
+        ui.label(egui::RichText::new("Save the document first?").font(crate::theme::semibold(15.0)));
+        ui.add_space(4.0);
+        widgets::hairline(ui);
+        ui.add_space(8.0);
+        ui.label(format!(
+            "“{name}” has never been saved. Each generation is kept in an xp-work folder next to the document's file; without one, only the layer stays."
+        ));
+        ui.add_space(12.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            answer = widgets::dialog_buttons(ui, &buttons);
+        });
+    });
+    if modal.should_close() {
+        answer = Some(widgets::ButtonRole::Cancel);
+    }
+    if answer.is_none() && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)) {
+        answer = Some(widgets::ButtonRole::Default);
+    }
+    match answer {
+        Some(widgets::ButtonRole::Cancel) => {
+            slot.take();
+        }
+        Some(widgets::ButtonRole::Alternate) => {
+            if let Some(Pending { label, busy, args, .. }) = slot.take() {
+                drop(slot);
+                let args: Vec<&str> = args.iter().map(String::as_str).collect();
+                spawn(app, label, busy, &args);
+            }
+        }
+        Some(widgets::ButtonRole::Default) => {
+            let doc = app.session.active().map(|st| st.doc.id);
+            pending.saving = doc;
+            drop(slot);
+            if let Err(e) = app.save_as(None) {
+                report(app, e);
+                if let Ok(mut slot) = PENDING.lock() {
+                    slot.take();
+                }
+            }
+        }
         _ => {}
     }
 }
