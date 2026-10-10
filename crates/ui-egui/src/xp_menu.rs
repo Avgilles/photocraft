@@ -32,6 +32,9 @@ struct Listing {
     /// The saved ComfyUI server (the bridge owns where it is saved).
     #[serde(default)]
     server: String,
+    /// Where exported graphs are dropped to become workflows (opened, never shown).
+    #[serde(default)]
+    folder: String,
     #[serde(default)]
     error: String,
 }
@@ -46,6 +49,10 @@ struct Choice {
 /// server to test and save when "Test & save" was clicked (the caller runs it: it needs the app).
 pub fn menu(ui: &mut egui::Ui, color: egui::Color32) -> (egui::Response, Option<String>) {
     let title = ui.add(egui::Button::new(egui::RichText::new("XP").color(color)));
+    if title.clicked() {
+        // A graph dropped in the workflows folder shows up the next time the menu opens.
+        query(ui.ctx(), &["workflows"]);
+    }
     let bar = MenuConfig::find(ui);
     let config = MenuConfig::new().close_behavior(bar.close_behavior).style(bar.style.clone());
     let mut connect = None;
@@ -73,6 +80,11 @@ fn body(ui: &mut egui::Ui) -> Option<String> {
             ui.colored_label(ui.visuals().error_fg_color, &l.error);
         }
         Some(l) => workflow_menus(ui, &ctx, l),
+    }
+    let folder = listing.as_ref().map(|l| l.folder.clone()).unwrap_or_default();
+    if ui.add_enabled(!folder.is_empty(), egui::Button::new("Open Workflows Folder")).clicked() {
+        open_folder(&folder);
+        ui.close();
     }
     if ui.add_enabled(!QUERYING.load(Ordering::Relaxed), egui::Button::new("Reload Workflows")).clicked() {
         query(&ctx, &["workflows"]);
@@ -109,6 +121,18 @@ fn workflow_menus(ui: &mut egui::Ui, ctx: &egui::Context, listing: &Listing) {
             }
         });
     }
+}
+
+/// Show the workflows folder in the platform file manager.
+fn open_folder(folder: &str) {
+    let program = if cfg!(target_os = "windows") {
+        "explorer"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    let _ = std::process::Command::new(program).arg(folder).spawn();
 }
 
 /// Ask the bridge in the background (it takes a few hundred ms to start); the answer replaces
