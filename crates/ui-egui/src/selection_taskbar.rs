@@ -43,6 +43,9 @@ struct Pending {
     args: Vec<String>,
     /// The Save dialog was opened for this document: run once it has a path.
     saving: Option<DocId>,
+    /// When the Save dialog closed without a path yet: the save itself runs as a job, so the
+    /// path may follow a moment later; give up only after a grace period.
+    closed_at: Option<Instant>,
 }
 
 pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
@@ -113,7 +116,7 @@ fn generate(app: &mut PhotocraftApp, label: &'static str, busy: &'static str, ar
         return spawn(app, label, busy, args);
     }
     if let Ok(mut slot) = PENDING.lock() {
-        *slot = Some(Pending { label, busy, args: args.iter().map(|a| a.to_string()).collect(), saving: None });
+        *slot = Some(Pending { label, busy, args: args.iter().map(|a| a.to_string()).collect(), saving: None, closed_at: None });
     }
 }
 
@@ -130,12 +133,17 @@ fn poll_pending(app: &mut PhotocraftApp, ctx: &egui::Context) {
                 spawn(app, label, busy, &args);
             }
         } else if app.file_dialog.is_none() {
-            // The Save dialog closed without a path: the user backed out.
-            let label = pending.label;
-            slot.take();
-            drop(slot);
-            app.ui.status = format!("{label}: not started (the document was not saved)");
-            app.ui.status_error = false;
+            // The Save dialog closed without a path: the save runs as a job, so wait a moment;
+            // past that, the user backed out.
+            let closed_at = *pending.closed_at.get_or_insert_with(Instant::now);
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+            if closed_at.elapsed() > std::time::Duration::from_secs(3) {
+                let label = pending.label;
+                slot.take();
+                drop(slot);
+                app.ui.status = format!("{label}: not started (the document was not saved)");
+                app.ui.status_error = false;
+            }
         }
         return;
     }
