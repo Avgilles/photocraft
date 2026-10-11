@@ -52,9 +52,12 @@ pub fn show(app: &mut PhotocraftApp, ctx: &egui::Context) {
     poll_pending(app, ctx);
     // A run leaves a placeholder layer and the app free: the bar stays, only the AI waits.
     let running = poll_running(app, ctx);
+    // Without the control server (`--control`, as start-photocraft starts it) the bridge cannot
+    // drive this PhotoCraft: no bar, rather than AI buttons that fail and a card over the canvas.
+    let bridged = app.control_rx.is_some();
     // A modal (Unsaved changes, TIFF options, a job's progress…) is no app dialog: check egui's.
     let modal = ctx.memory(|m| m.top_modal_layer()).is_some();
-    if app.ui.view.hides_chrome() || !app.ui.dialogs.is_empty() || app.jobs.focus.is_some() || modal {
+    if !bridged || app.ui.view.hides_chrome() || !app.ui.dialogs.is_empty() || app.jobs.focus.is_some() || modal {
         return;
     }
     let Some(bounds) = app.session.active().and_then(|st| st.doc.selection.as_ref()).map(|s| s.content_bounds()) else { return };
@@ -309,11 +312,15 @@ mod tests {
     use super::{bar_origin, failed};
     use crate::PhotocraftApp;
 
-    /// A dirty document with a rectangle selected: the bar shows under it.
-    fn app_with_selection() -> Harness<'static, PhotocraftApp> {
-        let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_max_steps(64).build_eframe(|cc| {
+    /// A dirty document with a rectangle selected, started with a control channel (as for the
+    /// bridge) or without one.
+    fn app_with_selection_and(control: bool) -> Harness<'static, PhotocraftApp> {
+        let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_max_steps(64).build_eframe(move |cc| {
             PhotocraftApp::setup_context(&cc.egui_ctx, Default::default());
             let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), crate::Services::default());
+            if control {
+                app = app.with_control(std::sync::mpsc::channel().1);
+            }
             app.run("file.new", json!({"width": 400, "height": 300})).unwrap();
             app.run("layer.new.layer", json!({})).unwrap();
             app.run("select.rect", json!({"x": 100, "y": 100, "width": 120, "height": 60})).unwrap();
@@ -323,10 +330,21 @@ mod tests {
         h
     }
 
+    fn app_with_selection() -> Harness<'static, PhotocraftApp> {
+        app_with_selection_and(true)
+    }
+
     #[test]
     fn the_bar_shows_under_a_selection() {
         let h = app_with_selection();
         assert!(h.query_by_label("Generative fill").is_some());
+    }
+
+    #[test]
+    fn no_bar_without_the_control_server() {
+        // Started without --control (not by start-photocraft): the bridge could not drive it.
+        let h = app_with_selection_and(false);
+        assert!(h.query_by_label("Generative fill").is_none());
     }
 
     #[test]
